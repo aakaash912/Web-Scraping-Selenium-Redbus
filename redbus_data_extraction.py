@@ -31,7 +31,7 @@ def popular_travel_agencies_extraction(empty_dictionary_input): # Custom written
     driver.quit()
     return empty_dictionary_input
 
-def extract_travel_links(travels_links_dict, d113_bus_dict):
+def extract_travel_links(links_dict, d113_bus_dict):
 
     driver = webdriver.Firefox()
     driver.maximize_window()
@@ -115,8 +115,184 @@ def extract_travel_links(travels_links_dict, d113_bus_dict):
     print(f"Total successful travel agencies processed: {successful_travel_agencies}")
     return travels_links_dict
 
+def parse_bus_details(details_box, df, route_name, route_link):
+    for element in details_box:
+        try:
+            # Bus name
+            bus_name = element.find_element("css selector", ".travels").text
+            
+            # Bus type
+            bus_type = element.find_element("css selector", ".bus-type.f-12").text
+            
+            # Departure time
+            departure_time = element.find_element("css selector", ".dp-time.f-19").text
+            
+            # Duration
+            duration = element.find_element("css selector", ".dur.l-color").text
+            
+            # Arrival time + date
+            arrival_time = element.find_element("css selector", ".bp-time.f-19").text
+            try:
+                next_day = element.find_element("css selector", ".next-day-dp-lbl").text
+                arrival_datetime = f"{arrival_time} ({next_day})"
+            except:
+                arrival_datetime = arrival_time
+            
+            # Rating - handles both numeric and "New"
+            try:
+                rating_element = element.find_element("css selector", ".lh-18.rating span")
+                rating = rating_element.text
+            except:
+                try:
+                    rating = element.find_element("css selector", ".rate_count").text
+                except:
+                    rating = "N/A"
+            
+            # Price
+            price = element.find_element("css selector", ".fare .f-19").text
+            
+            # Available seats and window seats
+            try:
+                seats = element.find_element("css selector", ".seat-left").text.split()[0]
+            except:
+                seats = "0"
+                
+            # Window seats - with null handling
+            try:
+                window_seats = element.find_element("css selector", ".window-left").text.split()[0]
+                seats_info = f"{seats} Seats | {window_seats} Window"
+            except:
+                seats_info = f"{seats} Seats"
+            
+            # Create new row data
+            new_row = {
+                'route_name': route_name,
+                'route_link': route_link,
+                'bus_name': bus_name,
+                'bus_type': bus_type,
+                'departing_time': departure_time,
+                'duration': duration,
+                'reaching_time': arrival_datetime,
+                'star_rating': rating,
+                'price': price,
+                'seats_available': seats_info
+            }
+            
+            # Append the new row to the DataFrame
+            df.loc[len(df)] = new_row
+            
+        except Exception as e:
+            print(f"Error parsing bus details: {e}")
+            continue
+    
+    return df
+
+def scrape_bus_details(links_dict,df):
+    driver = webdriver.Firefox()
+    driver.maximize_window()
+
+    print(f"Starting to process {len(travels_links_dict)} routes...")
+
+    for index, (route_name, route_link) in enumerate(travels_links_dict.items(), 1):
+        print(f"\nProcessing route {index}/{len(travels_links_dict)}: {route_name}")
+        
+        try:
+            driver.get(route_link)
+            driver.maximize_window()
+            sleep_time.sleep(10)
+
+            # Wait for the 'View Buses' button
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'button')))
+            driver.back()
+
+            body = driver.find_element(By.TAG_NAME, "body")
+            body.send_keys(Keys.PAGE_DOWN)
+
+            # Click "View Buses" buttons
+            view_buses_buttons = [driver.find_elements(By.CLASS_NAME, "button")]
+            for button in view_buses_buttons[0]:
+                if button.text == "View Buses" or button.text == "VIEW BUSES":
+                    button.click()
+                    print("View Buses button clicked successfully")
+
+            print("Starting content loading process...")
+            # Scroll to load full content
+            scrolling = True
+            while scrolling:
+                old_page_source = driver.page_source
+                body.send_keys(Keys.ARROW_UP)
+                new_page_source = driver.page_source
+                if new_page_source == old_page_source:
+                    scrolling = False
+
+            scrolling = True
+            while scrolling:
+                old_page_source = driver.page_source
+                body.send_keys(Keys.CONTROL + Keys.END)
+                sleep_time.sleep(1)
+                new_page_source = driver.page_source
+                if new_page_source == old_page_source:
+                    scrolling = False
+
+            scrolling = True
+            while scrolling:
+                old_page_source = driver.page_source
+                body.send_keys(Keys.ARROW_UP)
+                new_page_source = driver.page_source
+                if new_page_source == old_page_source:
+                    scrolling = False
+
+            print("Content fully loaded, parsing bus details...")
+            details_box = driver.find_elements(By.XPATH, "//div[contains(@class, 'clearfix') and contains(@class, 'row-one')]")
+            bus_details = parse_bus_details(details_box=details_box,df=df,route_link=route_link,route_name=route_name)
+            print(f"Found {len(details_box)} buses for this route")
+
+        except Exception as e:
+            print(f"Error processing route {route_name}: {str(e)}")
+            continue
+
+    print("\nScraping completed. Final DataFrame size:", len(df))
+    driver.quit()
+    return df
+
+def db_loader(engine_object_input,df):
+    create_table_query = """
+    CREATE TABLE bus_details_backup (
+        route_name TEXT,
+        route_link TEXT,
+        bus_name TEXT,
+        bus_type TEXT,
+        departing_time TIME,
+        duration TEXT,
+        reaching_time TIME,
+        star_rating_out_of_5 NUMERIC(2, 1),
+        price_inr NUMERIC(10, 2),
+        total_seats INTEGER,
+        window_seats INTEGER,
+        departing_date DATE,
+        reaching_date DATE
+    );
+
+    """
+
+    # Execute the query using the engine
+    with engine_object_input.connect() as connection:
+        connection.execute(text(create_table_query))
+        connection.commit()
+
+    print("Table created successfully!")
+    try:
+        df.to_sql("bus_details_backup", engine_object_input, if_exists="append", index=False)
+        print("Data inserted successfully!")
+    except Exception as e:
+        print("Error:", e)
+
 d113_bus_dict={}
 travel_links_dict={}
-d113_bus_dict=popular_travel_agencies_extraction(d113_bus_dict)
-travel_links_dict=extract_travel_links(travel_links_dict,d113_bus_dict)
+d113_bus_dict=popular_travel_agencies_extraction(empty_dictionary_input=d113_bus_dict)
+travel_links_dict=extract_travel_links(links_dict=travel_links_dict,d113_bus_dict=d113_bus_dict)
 print(travel_links_dict)
+df = pd.DataFrame(columns=['route_name', 'route_link', 'bus_name', 'bus_type', 'departing_time', 'duration','reaching_time', 'star_rating', 'price', 'seats_available'])
+df = scrape_bus_details(links_dict=travels_links_dict, df=df)
+engine = create_engine("postgresql://<username>:<password>@localhost:5432/<db_name>")
+db_loader(engine_object_input=engine,df=df)
