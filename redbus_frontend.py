@@ -134,7 +134,8 @@ def search_buses(agency, cleaned_route, departure_range, reaching_range,
             star_rating_out_of_5,
             price_inr,
             total_seats,
-            window_seats
+            window_seats,
+            route_link  -- Added route_link to the query
         FROM bus_routes
         WHERE 1=1
         """
@@ -174,10 +175,20 @@ def search_buses(agency, cleaned_route, departure_range, reaching_range,
             st.warning("No buses found matching your criteria.")
             return
         
-        # Display results in a more structured way using Streamlit
+        # Display results with clickable titles
         for row in results:
             clean_route = clean_route_name(row[0], agency)
-            with st.expander(f"{clean_route} - {row[1]}", expanded=True):
+            route_link = row[10]  # Get the route_link from the query results
+            
+            # Create a clickable title using markdown
+            title = f"{clean_route} - {row[1]}"
+            if route_link:
+                st.markdown(f"<h3><a href='{route_link}' target='_blank'>{title}</a></h3>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<h3>{title}</h3>", unsafe_allow_html=True)
+                
+            # Display the rest of the information in an expander
+            with st.expander("View Details", expanded=True):
                 col1, col2 = st.columns(2)
                 with col1:
                     st.write(f"**Bus Type:** {row[2]}")
